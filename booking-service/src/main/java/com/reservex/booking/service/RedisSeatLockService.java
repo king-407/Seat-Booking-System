@@ -20,9 +20,12 @@ public class RedisSeatLockService {
     public void lockSeats(Long tripId, List<String> seatNumbers) {
         List<String> lockedSeats = new ArrayList<>();
 
+        // Locking each and every seats //
         for (String seatNumber : seatNumbers) {
             boolean acquired = lockSeat(tripId, seatNumber);
 
+            // If by chance seat is already acquired then release all the locks of all the
+            // already acquired seats //
             if (!acquired) {
                 releaseSeats(tripId, lockedSeats);
                 throw new IllegalStateException("Seat already locked: " + seatNumber);
@@ -32,15 +35,21 @@ public class RedisSeatLockService {
         }
     }
 
+
+    // locking the seats //
     private boolean lockSeat(Long tripId, String seatNumber) {
         String key = buildKey(tripId, seatNumber);
 
+        // adding locks for the seats //
         Boolean acquired = redisTemplate.opsForValue()
                 .setIfAbsent(key, "LOCKED", Duration.ofMinutes(lockTtlMinutes));
 
+        // if a seat is not locked by redis then true or give false //
         return Boolean.TRUE.equals(acquired);
     }
 
+
+    // releasing the locks //
     public void releaseSeats(Long tripId, List<String> seatNumbers) {
         for (String seatNumber : seatNumbers) {
             redisTemplate.delete(buildKey(tripId, seatNumber));

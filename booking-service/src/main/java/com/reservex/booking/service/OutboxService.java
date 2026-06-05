@@ -5,18 +5,22 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.reservex.booking.entity.OutboxEvent;
 import com.reservex.booking.enums.OutboxStatus;
 import com.reservex.booking.repository.OutboxEventRepository;
-import com.reservex.events.dto.BookingCreatedEvent;
+import com.reservex.events.dto.PaymentRequestedEvent;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 @Service
 @RequiredArgsConstructor
 public class OutboxService {
+
     private final OutboxEventRepository outboxEventRepository;
     private final ObjectMapper objectMapper;
 
-    public void createBookingCreatedEvent(Long bookingId, BookingCreatedEvent event) {
+    public void createPaymentRequestedEvent(Long bookingId, PaymentRequestedEvent event) {
         try {
+
+            // adding payment requested as the payload here and marking status
+            // as pending //
             OutboxEvent outboxEvent = OutboxEvent.builder()
                     .aggregateId(bookingId)
                     .aggregateType("BOOKING")
@@ -27,8 +31,9 @@ public class OutboxService {
                     .build();
 
             outboxEventRepository.save(outboxEvent);
+
         } catch (JsonProcessingException ex) {
-            throw new RuntimeException("Failed to serialize BookingCreatedEvent", ex);
+            throw new RuntimeException("Failed to serialize PaymentRequestedEvent", ex);
         }
     }
 }

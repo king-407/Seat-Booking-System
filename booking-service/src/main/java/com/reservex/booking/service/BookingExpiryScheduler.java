@@ -17,6 +17,7 @@ import java.util.List;
 @Service
 @RequiredArgsConstructor
 public class BookingExpiryScheduler {
+
     private final BookingRepository bookingRepository;
     private final BookingSeatRepository bookingSeatRepository;
     private final RedisSeatLockService redisSeatLockService;
@@ -25,11 +26,16 @@ public class BookingExpiryScheduler {
     @Transactional
     public void expirePendingBookings() {
         List<Booking> expiredBookings = bookingRepository
-                .findByStatusAndExpiresAtBefore(BookingStatus.PENDING, LocalDateTime.now());
+                .findByStatusInAndExpiresAtBefore(
+                        List.of(BookingStatus.PENDING, BookingStatus.PAYMENT_REQUESTED),
+                        LocalDateTime.now()
+                );
 
         for (Booking booking : expiredBookings) {
             List<BookingSeat> seats = bookingSeatRepository.findByBookingId(booking.getId());
-            List<String> seatNumbers = seats.stream().map(BookingSeat::getSeatNumber).toList();
+            List<String> seatNumbers = seats.stream()
+                    .map(BookingSeat::getSeatNumber)
+                    .toList();
 
             booking.setStatus(BookingStatus.EXPIRED);
             bookingRepository.save(booking);

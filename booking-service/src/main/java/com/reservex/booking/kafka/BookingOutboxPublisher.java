@@ -15,25 +15,31 @@ import java.util.List;
 @Service
 @RequiredArgsConstructor
 public class BookingOutboxPublisher {
+
     private final OutboxEventRepository outboxEventRepository;
     private final KafkaTemplate<String, String> kafkaTemplate;
 
-    @Value("${app.kafka.booking-created-topic}")
-    private String bookingCreatedTopic;
+    @Value("${app.kafka.payment-requested-topic}")
+    private String paymentRequestedTopic;
 
     @Scheduled(fixedRate = 5000)
     public void publishPendingEvents() {
+
+        // find top 20 elements with status as pending  from outbox //
         List<OutboxEvent> events = outboxEventRepository
                 .findTop20ByStatusOrderByCreatedAtAsc(OutboxStatus.PENDING);
 
+
+        // one by one sending these events to the kafka topic to payment service //
         for (OutboxEvent event : events) {
             try {
                 kafkaTemplate.send(
-                        bookingCreatedTopic,
+                        paymentRequestedTopic,
                         String.valueOf(event.getAggregateId()),
                         event.getPayload()
                 ).get();
 
+                // if the data has been sent then mark it as sent //
                 event.setStatus(OutboxStatus.SENT);
                 event.setUpdatedAt(LocalDateTime.now());
 
