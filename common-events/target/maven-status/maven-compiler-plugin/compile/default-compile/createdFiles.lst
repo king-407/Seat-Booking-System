@@ -1,0 +1,2 @@
+com/reservex/events/dto/BookingCreatedEvent.class
+com/reservex/events/enums/EventType.class
