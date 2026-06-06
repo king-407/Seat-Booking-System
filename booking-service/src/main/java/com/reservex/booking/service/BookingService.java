@@ -37,35 +37,69 @@ public class BookingService {
     @Transactional
     public BookingResponse createBooking(BookingRequest request) {
 
-        // Checking for duplicate Booking //
         return bookingRepository.findByIdempotencyKey(request.getIdempotencyKey())
                 .map(this::buildResponse)
-                // If not duplicate then create new booking //
-                .orElseGet(() -> createNewBooking(request));
+                .orElseGet(() -> {
+                    try {
+                        return createNewBooking(request);
+                    } catch (DataIntegrityViolationException ex) {
+                        return fetchExistingBookingAfterRace(
+                                request.getIdempotencyKey(),
+                                ex
+                        );
+                    }
+                });
+    }
+
+    private BookingResponse fetchExistingBookingAfterRace(
+            String idempotencyKey,
+            DataIntegrityViolationException originalException
+    ) {
+        int maxAttempts = 3;
+
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException interruptedException) {
+                Thread.currentThread().interrupt();
+                throw originalException;
+            }
+
+            var existingBooking = bookingRepository.findByIdempotencyKey(idempotencyKey);
+
+            if (existingBooking.isPresent()) {
+                return buildResponse(existingBooking.get());
+            }
+        }
+
+        throw originalException;
     }
 
     private BookingResponse createNewBooking(BookingRequest request) {
 
-        // Check if seats are already present //
         validateSeatsNotConfirmed(request.getTripId(), request.getSeatNumbers());
 
-        redisSeatLockService.lockSeats(request.getTripId(), request.getSeatNumbers());
+        String lockToken = UUID.randomUUID().toString();
+
+        redisSeatLockService.lockSeats(
+                request.getTripId(),
+                request.getSeatNumbers(),
+                lockToken
+        );
 
         try {
-
-            // building the booking object with PENDING status //
             Booking booking = Booking.builder()
                     .userId(request.getUserId())
                     .tripId(request.getTripId())
                     .totalAmount(request.getAmount())
                     .status(BookingStatus.PENDING)
                     .idempotencyKey(request.getIdempotencyKey())
+                    .lockToken(lockToken)
                     .expiresAt(LocalDateTime.now().plusMinutes(5))
                     .build();
 
             Booking savedBooking = bookingRepository.save(booking);
 
-            // for each seat number we create a seperate booking seats //
             List<BookingSeat> seats = request.getSeatNumbers()
                     .stream()
                     .map(seat -> BookingSeat.builder()
@@ -76,14 +110,16 @@ public class BookingService {
                             .build())
                     .toList();
 
-            // saving all the entries for rhe different seats //
             bookingSeatRepository.saveAll(seats);
 
-            // returning booking //
             return buildResponse(savedBooking);
 
         } catch (Exception ex) {
-            redisSeatLockService.releaseSeats(request.getTripId(), request.getSeatNumbers());
+            redisSeatLockService.releaseSeats(
+                    request.getTripId(),
+                    request.getSeatNumbers(),
+                    lockToken
+            );
             throw ex;
         }
     }
@@ -91,12 +127,9 @@ public class BookingService {
     @Transactional
     public PaymentInitiationResponse initiatePayment(Long bookingId) {
 
-
         Booking booking = bookingRepository.findById(bookingId)
                 .orElseThrow(() -> new IllegalStateException("Booking not found: " + bookingId));
 
-        // If payment status is PAYMENT_REQUESTED ALREADY then just return saying that
-        // payment has been requested already //
         if (booking.getStatus() == BookingStatus.PAYMENT_REQUESTED) {
             return PaymentInitiationResponse.builder()
                     .bookingId(booking.getId())
@@ -109,35 +142,30 @@ public class BookingService {
             throw new IllegalStateException("Payment cannot be initiated for booking status: " + booking.getStatus());
         }
 
-        // If payment the booking has been expired already then  set status
-        // as expired for booking as well as for seats //
-
-        if (!booking.getExpiresAt().isAfter(LocalDateTime.now())) {
-            booking.setStatus(BookingStatus.EXPIRED);
-            bookingRepository.save(booking);
-
-            List<BookingSeat> seats = bookingSeatRepository.findByBookingId(booking.getId());
-            for (BookingSeat seat : seats) {
-                seat.setStatus(BookingSeatStatus.EXPIRED);
-            }
-            bookingSeatRepository.saveAll(seats);
-
-            redisSeatLockService.releaseSeats(
-                    booking.getTripId(),
-                    seats.stream().map(BookingSeat::getSeatNumber).toList()
-            );
-
-            throw new IllegalStateException("Booking has expired");
-        }
-
-
         List<BookingSeat> seats = bookingSeatRepository.findByBookingId(booking.getId());
         List<String> seatNumbers = seats.stream()
                 .map(BookingSeat::getSeatNumber)
                 .toList();
 
-        // preparing the payment requested event that will be going to the payment service
-        //
+        if (!booking.getExpiresAt().isAfter(LocalDateTime.now())) {
+            booking.setStatus(BookingStatus.EXPIRED);
+            bookingRepository.save(booking);
+
+            for (BookingSeat seat : seats) {
+                seat.setStatus(BookingSeatStatus.EXPIRED);
+            }
+
+            bookingSeatRepository.saveAll(seats);
+
+            redisSeatLockService.releaseSeats(
+                    booking.getTripId(),
+                    seatNumbers,
+                    booking.getLockToken()
+            );
+
+            throw new IllegalStateException("Booking has expired");
+        }
+
         PaymentRequestedEvent event = PaymentRequestedEvent.builder()
                 .eventId(UUID.randomUUID().toString())
                 .eventType(EventType.PAYMENT_REQUESTED)
@@ -183,24 +211,25 @@ public class BookingService {
             return;
         }
 
-        // if payment is succeeded but the booking has expired then we want REFUND_REQUESTED
-        // Missing booking seats as expired //
         if (!booking.getExpiresAt().isAfter(LocalDateTime.now())) {
             booking.setStatus(BookingStatus.REFUND_REQUIRED);
             bookingRepository.save(booking);
 
-            // setting booking seats as expired //
             for (BookingSeat seat : seats) {
                 seat.setStatus(BookingSeatStatus.EXPIRED);
             }
+
             bookingSeatRepository.saveAll(seats);
 
-            redisSeatLockService.releaseSeats(booking.getTripId(), seatNumbers);
+            redisSeatLockService.releaseSeats(
+                    booking.getTripId(),
+                    seatNumbers,
+                    booking.getLockToken()
+            );
             return;
         }
 
         try {
-            // if everything is fine then create confirm seats //
             for (BookingSeat seat : seats) {
                 ConfirmedSeat confirmedSeat = ConfirmedSeat.builder()
                         .bookingId(booking.getId())
@@ -211,22 +240,30 @@ public class BookingService {
                 confirmedSeatRepository.save(confirmedSeat);
             }
 
-            // Set booking status as confirmed
             booking.setStatus(BookingStatus.CONFIRMED);
             bookingRepository.save(booking);
 
-            // booking seats as confirmed //
             for (BookingSeat seat : seats) {
                 seat.setStatus(BookingSeatStatus.CONFIRMED);
             }
 
             bookingSeatRepository.saveAll(seats);
-            redisSeatLockService.releaseSeats(booking.getTripId(), seatNumbers);
+
+            redisSeatLockService.releaseSeats(
+                    booking.getTripId(),
+                    seatNumbers,
+                    booking.getLockToken()
+            );
 
         } catch (DataIntegrityViolationException ex) {
             booking.setStatus(BookingStatus.REFUND_REQUIRED);
             bookingRepository.save(booking);
-            redisSeatLockService.releaseSeats(booking.getTripId(), seatNumbers);
+
+            redisSeatLockService.releaseSeats(
+                    booking.getTripId(),
+                    seatNumbers,
+                    booking.getLockToken()
+            );
         }
     }
 
@@ -252,12 +289,16 @@ public class BookingService {
         }
 
         bookingSeatRepository.saveAll(seats);
-        redisSeatLockService.releaseSeats(booking.getTripId(), seatNumbers);
+
+        redisSeatLockService.releaseSeats(
+                booking.getTripId(),
+                seatNumbers,
+                booking.getLockToken()
+        );
     }
 
     private BookingResponse buildResponse(Booking booking) {
 
-        // querying this to get the seats to display in the BookingResponse //
         List<String> seatNumbers = bookingSeatRepository.findByBookingId(booking.getId())
                 .stream()
                 .map(BookingSeat::getSeatNumber)

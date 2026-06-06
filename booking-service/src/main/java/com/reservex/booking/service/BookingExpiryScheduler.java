@@ -27,9 +27,8 @@ public class BookingExpiryScheduler {
     public void expirePendingBookings() {
         List<Booking> expiredBookings = bookingRepository
                 .findByStatusInAndExpiresAtBefore(
-                        List.of(BookingStatus.PENDING, BookingStatus.PAYMENT_REQUESTED),
-                        LocalDateTime.now()
-                );
+                        List.of(BookingStatus.PENDING),
+                        LocalDateTime.now());
 
         for (Booking booking : expiredBookings) {
             List<BookingSeat> seats = bookingSeatRepository.findByBookingId(booking.getId());
@@ -45,7 +44,7 @@ public class BookingExpiryScheduler {
             }
 
             bookingSeatRepository.saveAll(seats);
-            redisSeatLockService.releaseSeats(booking.getTripId(), seatNumbers);
+            redisSeatLockService.releaseSeats(booking.getTripId(), seatNumbers, booking.getLockToken());
         }
     }
 }

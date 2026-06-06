@@ -43,6 +43,8 @@ public class Booking {
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
+    private String lockToken;
+
     @PrePersist
     public void prePersist() {
         createdAt = LocalDateTime.now();
