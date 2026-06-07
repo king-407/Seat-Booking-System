@@ -1,2 +1,9 @@
+com/reservex/events/dto/PaymentFailedEvent.class
+com/reservex/events/dto/PaymentFailedEvent$PaymentFailedEventBuilder.class
+com/reservex/events/dto/PaymentRequestedEvent.class
+com/reservex/events/dto/PaymentSucceededEvent$PaymentSucceededEventBuilder.class
 com/reservex/events/dto/BookingCreatedEvent.class
+com/reservex/events/dto/BookingCreatedEvent$BookingCreatedEventBuilder.class
 com/reservex/events/enums/EventType.class
+com/reservex/events/dto/PaymentRequestedEvent$PaymentRequestedEventBuilder.class
+com/reservex/events/dto/PaymentSucceededEvent.class

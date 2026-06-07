@@ -1,2 +1,5 @@
 /Users/shivamtiwari/Projects/spring-boot/reservex-ticket-booking-system/common-events/src/main/java/com/reservex/events/dto/BookingCreatedEvent.java
+/Users/shivamtiwari/Projects/spring-boot/reservex-ticket-booking-system/common-events/src/main/java/com/reservex/events/dto/PaymentFailedEvent.java
+/Users/shivamtiwari/Projects/spring-boot/reservex-ticket-booking-system/common-events/src/main/java/com/reservex/events/dto/PaymentRequestedEvent.java
+/Users/shivamtiwari/Projects/spring-boot/reservex-ticket-booking-system/common-events/src/main/java/com/reservex/events/dto/PaymentSucceededEvent.java
 /Users/shivamtiwari/Projects/spring-boot/reservex-ticket-booking-system/common-events/src/main/java/com/reservex/events/enums/EventType.java
