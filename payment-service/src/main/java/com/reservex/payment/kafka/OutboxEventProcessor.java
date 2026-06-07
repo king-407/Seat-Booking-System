@@ -1,5 +1,8 @@
 package com.reservex.payment.kafka;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.reservex.events.dto.PaymentFailedEvent;
+import com.reservex.events.dto.PaymentSucceededEvent;
 import com.reservex.payment.entity.OutboxEvent;
 import com.reservex.payment.enums.OutboxStatus;
 import com.reservex.payment.repository.OutboxEventRepository;
@@ -16,7 +19,8 @@ import java.time.LocalDateTime;
 public class OutboxEventProcessor {
 
     private final OutboxEventRepository outboxEventRepository;
-    private final KafkaTemplate<String, String> kafkaTemplate;
+    private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final ObjectMapper objectMapper;
 
     @Value("${app.kafka.payment-succeeded-topic}")
     private String paymentSucceededTopic;
@@ -41,11 +45,12 @@ public class OutboxEventProcessor {
 
         try {
             String topic = resolveTopic(event);
+            Object payload = resolvePayload(event);
 
             kafkaTemplate.send(
                     topic,
                     String.valueOf(event.getAggregateId()),
-                    event.getPayload()
+                    payload
             ).get();
 
             event.setStatus(OutboxStatus.SENT);
@@ -73,6 +78,18 @@ public class OutboxEventProcessor {
 
         if ("PAYMENT_FAILED".equals(event.getEventType())) {
             return paymentFailedTopic;
+        }
+
+        throw new IllegalStateException("Unknown event type: " + event.getEventType());
+    }
+
+    private Object resolvePayload(OutboxEvent event) throws Exception {
+        if ("PAYMENT_SUCCEEDED".equals(event.getEventType())) {
+            return objectMapper.readValue(event.getPayload(), PaymentSucceededEvent.class);
+        }
+
+        if ("PAYMENT_FAILED".equals(event.getEventType())) {
+            return objectMapper.readValue(event.getPayload(), PaymentFailedEvent.class);
         }
 
         throw new IllegalStateException("Unknown event type: " + event.getEventType());

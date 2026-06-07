@@ -1,8 +1,10 @@
 package com.reservex.booking.kafka;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.reservex.booking.entity.OutboxEvent;
 import com.reservex.booking.enums.OutboxStatus;
 import com.reservex.booking.repository.OutboxEventRepository;
+import com.reservex.events.dto.PaymentRequestedEvent;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -16,7 +18,8 @@ import java.time.LocalDateTime;
 public class OutboxEventProcessor {
 
     private final OutboxEventRepository outboxEventRepository;
-    private final KafkaTemplate<String, String> kafkaTemplate;
+    private final KafkaTemplate<String, PaymentRequestedEvent> kafkaTemplate;
+    private final ObjectMapper objectMapper;
 
     @Value("${app.kafka.payment-requested-topic}")
     private String paymentRequestedTopic;
@@ -38,10 +41,15 @@ public class OutboxEventProcessor {
         }
 
         try {
+            PaymentRequestedEvent paymentRequestedEvent = objectMapper.readValue(
+                    event.getPayload(),
+                    PaymentRequestedEvent.class
+            );
+
             kafkaTemplate.send(
                     paymentRequestedTopic,
                     String.valueOf(event.getAggregateId()),
-                    event.getPayload()
+                    paymentRequestedEvent
             ).get();
 
             event.setStatus(OutboxStatus.SENT);
