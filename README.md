@@ -1,124 +1,243 @@
-# Payment Service
+# ReserveX - Distributed Ticket Booking System
 
-Payment Service is a Spring Boot microservice responsible for processing payment requests in the ReserveX Ticket Booking System.
+ReserveX is a distributed ticket booking platform built using Spring Boot microservices, Kafka, Redis, and MySQL.
 
-It consumes payment requests from Kafka, processes payments, persists payment records, and publishes payment results back to Kafka using the Transactional Outbox Pattern.
+The project focuses on solving real-world distributed systems problems such as seat locking, idempotency, reliable event delivery, duplicate event processing, concurrent booking conflicts, and eventual consistency.
 
 ---
 
-## Tech Stack
+# Tech Stack
+
+### Backend
 
 * Java 21
 * Spring Boot
 * Spring Data JPA
-* MySQL
-* Apache Kafka
-* Docker
+* Hibernate
 * Maven
+
+### Databases
+
+* MySQL
+
+### Messaging
+
+* Apache Kafka
+
+### Caching / Distributed Coordination
+
+* Redis
+
+### Infrastructure
+
+* Docker
+* Docker Compose
 
 ---
 
-## Architecture
+# System Architecture
 
 ```text
-Booking Service
-       |
-       |
-       v
++------------------+
+|  Booking Service |
++------------------+
+         |
+         |
+         | PAYMENT_REQUESTED
+         v
+
++------------------+
+|  Kafka Topics    |
++------------------+
+
 payment-requested-topic
-       |
-       v
+
+         |
+         v
+
 +------------------+
 |  Payment Service |
 +------------------+
-       |
-       | Create Payment
-       | Process Payment
-       | Save Outbox Event
-       |
-       v
-outbox_events
-       |
-       | Scheduler
-       v
-+------------------+
-| Outbox Publisher |
-+------------------+
-       |
-       +------------------------+
-       |                        |
-       v                        v
+
+         |
+         |
+         +------------------------+
+         |                        |
+         v                        v
 
 payment-succeeded-topic   payment-failed-topic
 
-       |                        |
-       +------------+-----------+
-                    |
-                    v
+         |                        |
+         +------------+-----------+
+                      |
+                      v
 
-             Booking Service
++------------------+
+|  Booking Service |
++------------------+
 ```
 
 ---
 
-## Payment Flow
+# Microservices
 
-### Step 1
+## 1. Booking Service
 
-Booking Service publishes:
+Responsible for:
 
-```json
-{
-  "eventType": "PAYMENT_REQUESTED",
-  "bookingId": 501,
-  "userId": 101,
-  "amount": 2400
-}
-```
+* Seat reservation
+* Redis seat locking
+* Booking lifecycle management
+* Payment initiation
+* Booking expiration
+* Confirmed seat management
+* Payment event handling
 
-to:
+### Database Tables
 
 ```text
-payment-requested-topic
+bookings
+booking_seats
+confirmed_seats
+outbox_events
 ```
 
 ---
 
-### Step 2
+## 2. Payment Service
 
-Payment Service consumes the event.
+Responsible for:
 
-Consumer:
+* Consuming payment requests
+* Payment processing
+* Payment status management
+* Publishing payment result events
 
-```java
-PaymentRequestedConsumer
-```
-
-delegates processing to:
-
-```java
-PaymentService
-```
-
----
-
-### Step 3
-
-A payment record is created.
+### Database Tables
 
 ```text
 payments
----------
-id = 901
-booking_id = 501
-status = INITIATED
+outbox_events
 ```
 
 ---
 
-### Step 4
+## 3. Common Events Module
 
-Mock payment gateway processes the payment.
+Shared library used by all services.
+
+Contains:
+
+```text
+Kafka Event DTOs
+Shared Enums
+Event Contracts
+```
+
+Examples:
+
+```text
+PaymentRequestedEvent
+PaymentSucceededEvent
+PaymentFailedEvent
+```
+
+---
+
+# Booking Flow
+
+## Step 1
+
+User selects seats.
+
+Example:
+
+```text
+Trip = 9001
+Seats = A1, A2
+Amount = 2400
+```
+
+Request:
+
+```http
+POST /bookings
+```
+
+---
+
+## Step 2
+
+Booking Service acquires Redis locks.
+
+Example:
+
+```text
+seat_lock:trip:9001:seat:A1
+seat_lock:trip:9001:seat:A2
+```
+
+Redis stores:
+
+```text
+A1 -> lockToken-123
+A2 -> lockToken-123
+```
+
+Locks automatically expire after 5 minutes.
+
+---
+
+## Step 3
+
+Booking is created.
+
+```text
+Booking Status = PENDING
+```
+
+Rows created:
+
+```text
+bookings
+booking_seats
+```
+
+---
+
+## Step 4
+
+User clicks Pay.
+
+```http
+POST /bookings/{id}/payment
+```
+
+Booking Service publishes:
+
+```text
+PAYMENT_REQUESTED
+```
+
+using Transactional Outbox Pattern.
+
+---
+
+## Step 5
+
+Payment Service consumes the event.
+
+Payment record created:
+
+```text
+INITIATED
+```
+
+---
+
+## Step 6
+
+Mock payment gateway processes payment.
 
 Possible outcomes:
 
@@ -129,126 +248,131 @@ FAILED
 
 ---
 
-### Step 5A
+## Step 7A
 
-If payment succeeds:
+Success:
 
 ```text
-Payment Status = SUCCESS
-Transaction Id generated
+PAYMENT_SUCCEEDED
 ```
 
-A PaymentSucceededEvent is created.
+event is published.
 
 ---
 
-### Step 5B
+## Step 7B
 
-If payment fails:
+Failure:
 
 ```text
-Payment Status = FAILED
+PAYMENT_FAILED
 ```
 
-A PaymentFailedEvent is created.
+event is published.
 
 ---
 
-### Step 6
+## Step 8
 
-Instead of publishing directly to Kafka, events are stored in:
+Booking Service consumes payment result.
 
-```text
-outbox_events
-```
+### Success
 
-Example:
+Booking:
 
 ```text
-id = 1001
-event_type = PAYMENT_SUCCEEDED
-status = PENDING
+CONFIRMED
 ```
 
-This implements the Transactional Outbox Pattern.
+Booking Seats:
+
+```text
+CONFIRMED
+```
+
+Rows created:
+
+```text
+confirmed_seats
+```
+
+Redis locks released.
 
 ---
 
-### Step 7
+### Failure
 
-Scheduler scans pending outbox events every 5 seconds.
+Booking:
 
-```java
-PaymentOutboxPublisher
+```text
+CANCELLED
 ```
+
+Booking Seats:
+
+```text
+CANCELLED
+```
+
+Redis locks released.
 
 ---
 
-### Step 8
+# Database Design
 
-OutboxEventProcessor claims the event.
+## bookings
 
-```text
-PENDING -> PROCESSING
-```
+Stores booking lifecycle.
 
-Only one service instance can claim a specific event.
-
-This prevents duplicate publishing when multiple Payment Service instances are running.
-
----
-
-### Step 9
-
-Event is published to Kafka.
-
-Topics:
+Possible states:
 
 ```text
-payment-succeeded-topic
-payment-failed-topic
-```
-
----
-
-### Step 10
-
-If publish succeeds:
-
-```text
-PROCESSING -> SENT
-```
-
-If publish fails:
-
-```text
-PROCESSING -> PENDING
-retry_count++
-```
-
-After maximum retries:
-
-```text
-status = FAILED
+PENDING
+PAYMENT_REQUESTED
+CONFIRMED
+CANCELLED
+EXPIRED
+REFUND_REQUIRED
 ```
 
 ---
 
-## Database Schema
+## booking_seats
 
-### payments
+Stores seats selected by a booking.
 
-| Column         | Description                  |
-| -------------- | ---------------------------- |
-| id             | Payment Id                   |
-| booking_id     | Booking Id                   |
-| user_id        | User Id                      |
-| amount         | Payment Amount               |
-| status         | INITIATED / SUCCESS / FAILED |
-| transaction_id | Payment Transaction Id       |
-| failure_reason | Failure Reason               |
-| created_at     | Creation Time                |
-| updated_at     | Last Update Time             |
+Possible states:
+
+```text
+PENDING
+CONFIRMED
+CANCELLED
+EXPIRED
+```
+
+---
+
+## confirmed_seats
+
+Final source of truth.
+
+Constraint:
+
+```text
+UNIQUE(trip_id, seat_number)
+```
+
+Guarantees:
+
+```text
+No seat can ever be sold twice.
+```
+
+---
+
+## payments
+
+Stores payment records.
 
 Constraint:
 
@@ -264,192 +388,321 @@ One booking can have only one payment.
 
 ---
 
-### outbox_events
+# Distributed Systems Concepts Implemented
 
-| Column         | Description                          |
-| -------------- | ------------------------------------ |
-| id             | Outbox Event Id                      |
-| aggregate_id   | Payment Id                           |
-| aggregate_type | PAYMENT                              |
-| event_type     | SUCCESS / FAILED                     |
-| payload        | JSON Event                           |
-| status         | PENDING / PROCESSING / SENT / FAILED |
-| retry_count    | Retry Counter                        |
-| last_error     | Last Publish Error                   |
-| created_at     | Creation Time                        |
-| updated_at     | Last Update Time                     |
+## 1. Redis Distributed Seat Locking
+
+Problem:
+
+```text
+Two users trying to book the same seat simultaneously.
+```
+
+Solution:
+
+```text
+Redis SETNX + TTL
+```
+
+Only one user acquires the seat lock.
 
 ---
 
-## Kafka Topics
+## 2. Lock Ownership Protection
 
-### Incoming
-
-```text
-payment-requested-topic
-```
-
-Consumed by:
-
-```java
-PaymentRequestedConsumer
-```
-
----
-
-### Outgoing
+Problem:
 
 ```text
-payment-succeeded-topic
+Expired booking deletes another booking's lock.
 ```
+
+Solution:
 
 ```text
-payment-failed-topic
+Unique lockToken per booking.
 ```
 
-Published by:
+Redis stores:
 
-```java
-OutboxEventProcessor
+```text
+seat -> lockToken
+```
+
+instead of:
+
+```text
+seat -> LOCKED
 ```
 
 ---
 
-## Edge Cases Handled
+## 3. Atomic Lock Release
 
-### Duplicate Kafka Delivery
+Problem:
 
-Kafka provides at-least-once delivery.
-
-The same PAYMENT_REQUESTED event may arrive more than once.
-
-Protection:
-
-```java
-findByBookingId()
+```text
+GET
+COMPARE
+DELETE
 ```
 
-and
+is not atomic.
+
+Solution:
+
+Redis Lua Script:
+
+```lua
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+    return redis.call('DEL', KEYS[1])
+else
+    return 0
+end
+```
+
+Guarantees:
+
+```text
+Delete lock only if current owner matches.
+```
+
+---
+
+## 4. Idempotent Booking Creation
+
+Problem:
+
+```text
+User clicks Book multiple times.
+```
+
+Solution:
+
+```text
+idempotency_key
+```
+
+Constraint:
+
+```text
+UNIQUE(idempotency_key)
+```
+
+Guarantees:
+
+```text
+Same booking request is processed once.
+```
+
+---
+
+## 5. Idempotent Payment Processing
+
+Problem:
+
+```text
+Duplicate Kafka events.
+```
+
+Solution:
 
 ```text
 UNIQUE(booking_id)
 ```
 
----
-
-### Concurrent Duplicate Processing
-
-Two duplicate Kafka events processed simultaneously.
-
-Protection:
+Guarantees:
 
 ```text
-UNIQUE(booking_id)
+Payment processed once.
 ```
-
-One insert succeeds.
-
-Second insert fails safely.
 
 ---
 
-### Payment Created But Kafka Publish Fails
+## 6. Transactional Outbox Pattern
 
-Payment is already saved.
-
-Outbox event remains:
+Problem:
 
 ```text
-PENDING
+Database save succeeds.
+Kafka publish fails.
 ```
 
-Scheduler retries automatically.
+Solution:
 
-No data loss occurs.
+```text
+Store event in outbox table first.
+```
+
+Scheduler publishes later.
+
+Guarantees:
+
+```text
+No event loss.
+```
 
 ---
 
-### Multiple Payment Service Instances
+## 7. Kafka At-Least-Once Delivery
 
-Two schedulers may pick the same outbox event.
-
-Protection:
+System assumes:
 
 ```text
-PENDING -> PROCESSING
+Messages may be delivered more than once.
 ```
 
-claim operation.
+Consumers are designed to be idempotent.
 
-Only one instance can publish.
+---
+
+# Failure Scenarios Handled
+
+### Duplicate Booking Requests
+
+Handled via:
+
+```text
+idempotency_key
+```
+
+---
+
+### Duplicate Kafka Messages
+
+Handled via:
+
+```text
+UNIQUE constraints
+Idempotent consumers
+```
+
+---
+
+### Booking Expiry
+
+Locks expire automatically after 5 minutes.
+
+Booking status:
+
+```text
+EXPIRED
+```
+
+---
+
+### Payment Failure
+
+Booking:
+
+```text
+CANCELLED
+```
+
+Locks released.
+
+---
+
+### Payment Success After Expiry
+
+Booking:
+
+```text
+REFUND_REQUIRED
+```
+
+No seat confirmation occurs.
 
 ---
 
 ### Kafka Publish Failure
 
-Retry count increases.
-
-```text
-retry_count++
-```
-
-After maximum retries:
-
-```text
-status = FAILED
-```
+Outbox event retried automatically.
 
 ---
 
-## Running Locally
+### Multiple Service Instances
 
-Start infrastructure:
+Outbox events are claimed using:
+
+```text
+PENDING -> PROCESSING
+```
+
+state transition.
+
+Only one instance can publish a specific event.
+
+---
+
+# Running Locally
+
+## Start Infrastructure
 
 ```bash
 docker compose up -d
 ```
 
-Create database:
+---
+
+## Create Databases
 
 ```sql
+CREATE DATABASE booking_db;
 CREATE DATABASE payment_db;
 ```
 
-Install shared module:
+---
+
+## Install Shared Module
 
 ```bash
 cd common-events
 mvn clean install
 ```
 
-Start Payment Service:
+---
+
+## Start Booking Service
 
 ```bash
+cd booking-service
 mvn spring-boot:run
 ```
 
 ---
 
-## Future Improvements
+## Start Payment Service
 
-* Real payment gateway integration (Stripe/Razorpay)
-* Payment timeout handling
-* Refund workflow
-* Dead Letter Queue (DLQ)
-* Distributed tracing
-* Metrics and monitoring
-* Idempotency tokens from external gateways
-* Saga orchestration support
+```bash
+cd payment-service
+mvn spring-boot:run
+```
 
 ---
 
-## Design Patterns Used
+# Future Improvements
 
-* Transactional Outbox Pattern
+* Saga Orchestration
+* Refund Service
+* Notification Service
+* DLQ Topics
+* Prometheus Metrics
+* Grafana Dashboards
+* OpenTelemetry Tracing
+* API Gateway
+* Authentication & Authorization
+* Kubernetes Deployment
+* Seat Availability Search Service
+
+---
+
+# Key Learnings
+
 * Event-Driven Architecture
-* Idempotent Consumer
-* Retry Mechanism
-* Producer-Consumer Pattern
-* Database Unique Constraints for Consistency
-
----
+* Distributed Locking
+* Transactional Outbox Pattern
+* Kafka Reliability Patterns
+* Idempotency
+* Eventual Consistency
+* Concurrent Booking Handling
+* Fault Tolerant System Design
