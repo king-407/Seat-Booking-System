@@ -1,4 +1,8 @@
 package com.reservex.payment.enums;
 
-public class OutboxStatus {
+public enum OutboxStatus {
+    PENDING,
+    PROCESSING,
+    SENT,
+    FAILED
 }
