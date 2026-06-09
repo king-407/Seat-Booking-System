@@ -706,3 +706,11 @@ mvn spring-boot:run
 * Eventual Consistency
 * Concurrent Booking Handling
 * Fault Tolerant System Design
+
+# 👨‍💻 Author
+
+## Shivam Tiwari
+
+Backend Engineer passionate about distributed systems, scalable backend architectures, and event-driven microservices.
+
+---
