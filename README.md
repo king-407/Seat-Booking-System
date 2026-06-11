@@ -711,6 +711,6 @@ mvn spring-boot:run
 
 ## Shivam Tiwari
 
-Backend Engineer passionate about distributed systems, scalable backend architectures, and event-driven microservices.
+Backend Engineer passionate about java, distributed systems, scalable backend architectures, and event-driven microservices.
 
 ---
